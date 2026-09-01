@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ARTEMIS AR/VR Services API</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui.css">
+  <style>
+    body { margin: 0; background: #fafafa; }
+    .topbar { display: none; }
+    #banner {
+      background: #1b1f23; color: #fff; padding: 14px 20px;
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    #banner strong { color: #7ee787; }
+    #banner a { color: #79c0ff; }
+  </style>
+</head>
+<body>
+  <div id="banner">
+    <strong>ARTEMIS AR/VR Services</strong> — ATHENA Research Center, WP9.2 &nbsp;·&nbsp;
+    24 endpoints as specified in
+    <a href="https://doi.org/10.5281/zenodo.20750197">Deliverable D9.2, Section 3.3</a>
+    &nbsp;·&nbsp; the server is reachable over the project VPN only, so
+    &ldquo;Try it out&rdquo; will not reach it from the public internet.
+  </div>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui-bundle.js" crossorigin></script>
+  <script src="https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui-standalone-preset.js" crossorigin></script>
+  <script>
+    window.onload = () => {
+      window.ui = SwaggerUIBundle({
+        url: 'artemis-arvr-openapi.json',
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+        docExpansion: 'list',
+        defaultModelsExpandDepth: 1,
+        presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
+        plugins: [SwaggerUIBundle.plugins.DownloadUrl],
+        layout: 'StandaloneLayout'
+      });
+    };
+  </script>
+</body>
+</html>

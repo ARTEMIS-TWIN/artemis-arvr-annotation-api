@@ -1,0 +1,2695 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "ARTEMIS AR/VR Services API",
+    "version": "4.0.0",
+    "description": "REST API for immersive, multi-user collaborative annotation of cultural heritage\n3D digital twins, developed by ATHENA Research Center within ARTEMIS WP9.2.\n\nThis specification covers the **24 endpoints** of the four AR/VR collaboration\nservice categories defined in Deliverable D9.2, Section 3.3:\n\n- **Annotations** (7) — six annotation types: POI, LASSO, PRIMITIVE, MEASUREMENT, ENTITY, IMAGE\n- **Annotation Groups** (8) — grouping, membership management and export\n- **Workspaces** (7) — the collaborative session container, one per 3D asset\n- **Save Logs** (2) — append-only audit trail of save events\n\n## Out of scope\n\nAuthentication and asset management are, per D9.2 §3.3.1, provided by supporting\ninfrastructure and are not specified here. Every endpoint below nevertheless\nrequires a valid JWT Bearer token; integration with the project INDIGO-IAM OIDC\nprovider is planned.\n\nThe active-workspace runtime endpoints are also excluded from this first\npublication: they are backed by an in-memory registry whose state does not\nsurvive a restart and would diverge across replicas.\n\n## Persistence model\n\nThe API is not real-time. The AR client builds annotations locally and commits\nthem when the composer saves, as N+1 REST calls ending in a save-log entry.\n\nPrimary consumer: the VAX Annotator Unity/AR client on Meta Quest headsets.",
+    "contact": {
+      "name": "ATHENA Research Center — WP9.2",
+      "email": "pistofid@athenarc.gr"
+    },
+    "license": {
+      "name": "MIT",
+      "url": "https://opensource.org/licenses/MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://10.0.5.10:8092",
+      "description": "ARTEMIS Development Platform (CNR-INO, reachable over the project VPN only)"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Workspaces",
+      "description": "Collaboration workspace CRUD operations"
+    },
+    {
+      "name": "Annotations",
+      "description": "VR annotation creation, querying, and export"
+    },
+    {
+      "name": "Annotation Groups",
+      "description": "Group annotations and manage members"
+    },
+    {
+      "name": "Save Logs",
+      "description": "Immutable per-save audit entries (v4.0.0+)"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "JWT token obtained from /artemis/auth/login or /artemis/auth/register"
+      }
+    },
+    "schemas": {
+      "Vector3": {
+        "type": "object",
+        "required": [
+          "x",
+          "y",
+          "z"
+        ],
+        "properties": {
+          "x": {
+            "type": "number",
+            "example": 1.5
+          },
+          "y": {
+            "type": "number",
+            "example": 2
+          },
+          "z": {
+            "type": "number",
+            "example": 0.5
+          }
+        }
+      },
+      "Point": {
+        "description": "Wraps a Vector3 position. Used inside lasso.points[] and measurement.points[].",
+        "type": "object",
+        "properties": {
+          "position": {
+            "$ref": "#/components/schemas/Vector3"
+          }
+        }
+      },
+      "Creator": {
+        "description": "Populated creator/composer info embedded in entity responses (AN-2, AG-1, W-1).",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "507f1f77bcf86cd799439011"
+          },
+          "name": {
+            "type": "string",
+            "example": "John Doe"
+          }
+        }
+      },
+      "Workspace": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "507f1f77bcf86cd799439011"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "example": "Xanthi VR Tour"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000,
+            "example": "Virtual tour of historic Xanthi"
+          },
+          "accessCode": {
+            "type": "string",
+            "example": "XANTHI2025",
+            "description": "Empty string for public workspaces"
+          },
+          "assetId": {
+            "type": "string",
+            "example": "507f1f77bcf86cd799439011"
+          },
+          "composer": {
+            "$ref": "#/components/schemas/Creator"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "archived"
+            ],
+            "example": "active"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SaveLog": {
+        "description": "Immutable audit entry recording a save event on a workspace (SL-1..SL-7).",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "507f1f77bcf86cd799439011"
+          },
+          "workspaceId": {
+            "type": "string",
+            "example": "507f1f77bcf86cd799439011"
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "example": "Added 3 POI annotations, deleted 1 measurement."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AnnotationGroup": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "507f1f77bcf86cd799439011"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "example": "Structural Issues"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000,
+            "example": "Collection of structural integrity annotations"
+          },
+          "workspaceId": {
+            "type": "string",
+            "example": "507f1f77bcf86cd799439011"
+          },
+          "creator": {
+            "$ref": "#/components/schemas/Creator"
+          },
+          "visibility": {
+            "type": "boolean",
+            "default": true,
+            "description": "Client-controlled UI setting (AG-4, AG-5)."
+          },
+          "memberCount": {
+            "type": "integer",
+            "description": "Number of annotations in this group (added by some endpoints)."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Annotation": {
+        "description": "Unified annotation document. Common fields live at the top level. Exactly one of {poi, lasso, primitive, measurement, entity, image} is populated based on `annotationType`.\n",
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string",
+            "example": "507f1f77bcf86cd799439011"
+          },
+          "workspaceId": {
+            "type": "string",
+            "example": "507f1f77bcf86cd799439011"
+          },
+          "annotationGroupId": {
+            "type": "string",
+            "nullable": true,
+            "example": "507f1f77bcf86cd799439011"
+          },
+          "annotationType": {
+            "type": "string",
+            "enum": [
+              "POI",
+              "LASSO",
+              "PRIMITIVE",
+              "MEASUREMENT",
+              "ENTITY",
+              "IMAGE"
+            ],
+            "example": "POI"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "example": "Historic Building"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000,
+            "example": "Main entrance of the building"
+          },
+          "creator": {
+            "$ref": "#/components/schemas/Creator"
+          },
+          "visualMarkerPosition": {
+            "$ref": "#/components/schemas/Vector3"
+          },
+          "visualMarkerState": {
+            "type": "string",
+            "example": "editing",
+            "description": "UI state — free string (G-7). Default 'editing'."
+          },
+          "poi": {
+            "$ref": "#/components/schemas/PoiData"
+          },
+          "lasso": {
+            "$ref": "#/components/schemas/LassoData"
+          },
+          "primitive": {
+            "$ref": "#/components/schemas/PrimitiveData"
+          },
+          "measurement": {
+            "$ref": "#/components/schemas/MeasurementData"
+          },
+          "entity": {
+            "$ref": "#/components/schemas/EntityData"
+          },
+          "image": {
+            "$ref": "#/components/schemas/ImageData"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "PoiData": {
+        "description": "Type-specific data for POI (Point Of Interest) annotations.",
+        "type": "object",
+        "properties": {
+          "position": {
+            "$ref": "#/components/schemas/Vector3"
+          }
+        }
+      },
+      "LassoData": {
+        "description": "Type-specific data for LASSO annotations. `surface` and `metricUnit` are client-computed.",
+        "type": "object",
+        "properties": {
+          "points": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Point"
+            },
+            "description": "Polyline/polygon points. Minimum 3 for completeness (LA-5)."
+          },
+          "surface": {
+            "type": "number",
+            "example": 12.5
+          },
+          "metricUnit": {
+            "type": "string",
+            "example": "m²",
+            "description": "Free string (G-7)."
+          }
+        }
+      },
+      "MeasurementData": {
+        "description": "Type-specific data for MEASUREMENT annotations. `distance` and `metricUnit` are client-computed.",
+        "type": "object",
+        "properties": {
+          "points": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Point"
+            },
+            "description": "Path points. Minimum 2 for completeness (ME-5)."
+          },
+          "distance": {
+            "type": "number",
+            "example": 5.2
+          },
+          "metricUnit": {
+            "type": "string",
+            "example": "m",
+            "description": "Free string (G-7)."
+          }
+        }
+      },
+      "PrimitiveData": {
+        "description": "Type-specific data for PRIMITIVE (3D shape) annotations. `shape` is a free string (G-7).",
+        "type": "object",
+        "properties": {
+          "shape": {
+            "type": "string",
+            "example": "box",
+            "description": "Free string — e.g., 'box', 'sphere', 'cylinder'."
+          },
+          "position": {
+            "$ref": "#/components/schemas/Vector3"
+          },
+          "rotation": {
+            "$ref": "#/components/schemas/Vector3"
+          },
+          "scale": {
+            "$ref": "#/components/schemas/Vector3"
+          }
+        }
+      },
+      "EntityData": {
+        "description": "Type-specific data for ENTITY (3D model) annotations. `type` is a free string (G-7).",
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "example": "crowd_barrier",
+            "description": "Free string — e.g., 'crowd_barrier', 'car', 'tree'."
+          },
+          "position": {
+            "$ref": "#/components/schemas/Vector3"
+          },
+          "rotation": {
+            "$ref": "#/components/schemas/Vector3"
+          },
+          "scale": {
+            "$ref": "#/components/schemas/Vector3"
+          }
+        }
+      },
+      "ImageData": {
+        "description": "Type-specific data for IMAGE annotations. `scale` is a single number (uniform scale, IM-3).",
+        "type": "object",
+        "properties": {
+          "link": {
+            "type": "string",
+            "example": "https://example.com/image.png"
+          },
+          "position": {
+            "$ref": "#/components/schemas/Vector3"
+          },
+          "rotation": {
+            "$ref": "#/components/schemas/Vector3"
+          },
+          "scale": {
+            "type": "number",
+            "example": 1.5,
+            "description": "Uniform scale — Number, not Vector3."
+          }
+        }
+      },
+      "CreateWorkspaceRequest": {
+        "type": "object",
+        "required": [
+          "title",
+          "assetId"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Must be unique among active workspaces (case-insensitive)."
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "accessCode": {
+            "type": "string",
+            "description": "Optional. Empty string for public workspace. Will be uppercased server-side."
+          },
+          "assetId": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{24}$",
+            "example": "507f1f77bcf86cd799439011"
+          }
+        }
+      },
+      "UpdateWorkspaceRequest": {
+        "type": "object",
+        "description": "Partial update — all fields optional. `assetId` and `composerId` are immutable.",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "accessCode": {
+            "type": "string",
+            "description": "Empty string clears the code (public workspace)."
+          }
+        }
+      },
+      "CreateAnnotationGroupRequest": {
+        "type": "object",
+        "required": [
+          "title",
+          "workspaceId"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "description": {
+            "type": "string"
+          },
+          "workspaceId": {
+            "type": "string",
+            "example": "507f1f77bcf86cd799439011"
+          },
+          "createdBy": {
+            "type": "string",
+            "description": "Optional userId of the actual creator. Falls back to JWT user if omitted (G-2 async)."
+          },
+          "visibility": {
+            "type": "boolean",
+            "default": true
+          },
+          "annotationIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional array of annotation IDs to add to the group on creation."
+          }
+        }
+      },
+      "UpdateAnnotationGroupRequest": {
+        "type": "object",
+        "description": "Partial update. Two tiers — title/description require composer role; visibility is open to any authenticated user (AG-6).",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "visibility": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CreateAnnotationRequest": {
+        "description": "Create an annotation. The body should include the appropriate nested sub-object (poi/lasso/primitive/measurement/entity/image) matching `annotationType`. Schema is permissive (AN-10) — completeness is validated by POST /artemis/annotations/validate.\n",
+        "type": "object",
+        "required": [
+          "workspaceId",
+          "annotationType",
+          "title"
+        ],
+        "properties": {
+          "workspaceId": {
+            "type": "string"
+          },
+          "annotationType": {
+            "type": "string",
+            "enum": [
+              "POI",
+              "LASSO",
+              "PRIMITIVE",
+              "MEASUREMENT",
+              "ENTITY",
+              "IMAGE"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "description": {
+            "type": "string"
+          },
+          "createdBy": {
+            "type": "string",
+            "description": "Optional userId of the actual creator. Falls back to JWT user if omitted."
+          },
+          "annotationGroupId": {
+            "type": "string",
+            "nullable": true
+          },
+          "visualMarkerPosition": {
+            "$ref": "#/components/schemas/Vector3"
+          },
+          "visualMarkerState": {
+            "type": "string",
+            "example": "editing"
+          },
+          "poi": {
+            "$ref": "#/components/schemas/PoiData"
+          },
+          "lasso": {
+            "$ref": "#/components/schemas/LassoData"
+          },
+          "primitive": {
+            "$ref": "#/components/schemas/PrimitiveData"
+          },
+          "measurement": {
+            "$ref": "#/components/schemas/MeasurementData"
+          },
+          "entity": {
+            "$ref": "#/components/schemas/EntityData"
+          },
+          "image": {
+            "$ref": "#/components/schemas/ImageData"
+          }
+        }
+      },
+      "UpdateAnnotationRequest": {
+        "description": "Partial update. `createdBy` is ignored (AN-11). Type-specific sub-object is merged.",
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "description": {
+            "type": "string"
+          },
+          "visualMarkerPosition": {
+            "$ref": "#/components/schemas/Vector3"
+          },
+          "visualMarkerState": {
+            "type": "string"
+          },
+          "annotationGroupId": {
+            "type": "string",
+            "nullable": true
+          },
+          "poi": {
+            "$ref": "#/components/schemas/PoiData"
+          },
+          "lasso": {
+            "$ref": "#/components/schemas/LassoData"
+          },
+          "primitive": {
+            "$ref": "#/components/schemas/PrimitiveData"
+          },
+          "measurement": {
+            "$ref": "#/components/schemas/MeasurementData"
+          },
+          "entity": {
+            "$ref": "#/components/schemas/EntityData"
+          },
+          "image": {
+            "$ref": "#/components/schemas/ImageData"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "example": "Validation error"
+          },
+          "details": {
+            "type": "object",
+            "nullable": true
+          }
+        }
+      },
+      "SuccessResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "message": {
+            "type": "string",
+            "example": "Operation completed successfully"
+          }
+        }
+      },
+      "ValidationResult": {
+        "description": "Response from POST /artemis/annotations/validate (AN-10).",
+        "type": "object",
+        "properties": {
+          "valid": {
+            "type": "boolean",
+            "example": false
+          },
+          "annotationType": {
+            "type": "string",
+            "nullable": true,
+            "example": "LASSO"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "example": "lasso.points"
+                },
+                "message": {
+                  "type": "string",
+                  "example": "LASSO requires at least 3 points"
+                }
+              }
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "example": "lasso.metricUnit"
+                },
+                "message": {
+                  "type": "string",
+                  "example": "lasso.metricUnit is recommended for LASSO"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "parameters": {
+      "ObjectIdParam": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{24}$"
+        },
+        "description": "MongoDB ObjectId",
+        "example": "507f1f77bcf86cd799439011"
+      },
+      "LimitParam": {
+        "name": "limit",
+        "in": "query",
+        "schema": {
+          "type": "number",
+          "default": 100,
+          "maximum": 1000
+        },
+        "description": "Number of items to return"
+      },
+      "OffsetParam": {
+        "name": "offset",
+        "in": "query",
+        "schema": {
+          "type": "number",
+          "default": 0
+        },
+        "description": "Number of items to skip"
+      }
+    },
+    "responses": {
+      "UnauthorizedError": {
+        "description": "Missing or invalid JWT token",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "ForbiddenError": {
+        "description": "Insufficient permissions",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "NotFoundError": {
+        "description": "Resource not found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "ValidationError": {
+        "description": "Input validation failed",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/artemis/annotation-groups": {
+      "post": {
+        "summary": "Create annotation group",
+        "description": "Create a new annotation group within a workspace. Optionally add initial annotations on creation and set visibility. Any authenticated user can create groups. The `createdBy` field is optional in body (G-2 async) — falls back to the authenticated JWT user if omitted.",
+        "tags": [
+          "Annotation Groups"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAnnotationGroupRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Annotation group created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Annotation group created successfully"
+                    },
+                    "group": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/AnnotationGroup"
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "memberCount": {
+                              "type": "integer",
+                              "description": "Number of annotations added to group",
+                              "example": 2
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error (empty title, title too long, archived workspace, or annotations not in same workspace)"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token"
+          },
+          "404": {
+            "description": "Workspace not found or one or more annotations not found"
+          }
+        }
+      },
+      "get": {
+        "summary": "List annotation groups",
+        "description": "List annotation groups with optional filtering by workspace. Returns groups sorted by creation date (newest first) with populated creator information.",
+        "tags": [
+          "Annotation Groups"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspaceId",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by workspace ID",
+            "example": "507f1f77bcf86cd799439011"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of annotation groups retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "Number of groups returned",
+                      "example": 5
+                    },
+                    "groups": {
+                      "type": "array",
+                      "items": {
+                        "allOf": [
+                          {
+                            "$ref": "#/components/schemas/AnnotationGroup"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "memberCount": {
+                                "type": "integer",
+                                "description": "Number of annotations in this group (always present on this endpoint).",
+                                "example": 4
+                              },
+                              "workspace": {
+                                "type": "object",
+                                "description": "Populated subset of the parent workspace.",
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "title": {
+                                    "type": "string"
+                                  },
+                                  "accessCode": {
+                                    "type": "string"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token"
+          }
+        }
+      }
+    },
+    "/artemis/annotation-groups/{id}": {
+      "get": {
+        "summary": "Get single annotation group",
+        "description": "Retrieve a specific annotation group by its MongoDB ObjectId. Optionally include all member annotations in the response using the includeMembers query parameter.",
+        "tags": [
+          "Annotation Groups"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{24}$"
+            },
+            "description": "MongoDB ObjectId of the annotation group",
+            "example": "507f1f77bcf86cd799439011"
+          },
+          {
+            "in": "query",
+            "name": "includeMembers",
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "Include member annotations in response (true/false)",
+            "example": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Annotation group retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "group": {
+                      "$ref": "#/components/schemas/AnnotationGroup"
+                    },
+                    "members": {
+                      "type": "array",
+                      "description": "Array of member annotations (only if includeMembers=true)",
+                      "items": {
+                        "$ref": "#/components/schemas/Annotation"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid ID format - must be a valid MongoDB ObjectId"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Annotation group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update annotation group",
+        "description": "Update an annotation group's metadata. Two authorization tiers: (1) `title` / `description` updates require the caller to have composer role. (2) `visibility` updates are permitted for any authenticated user — it's a client-controlled UI setting (AG-6). Attempts to update `createdBy` are ignored.\n",
+        "tags": [
+          "Annotation Groups"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{24}$"
+            },
+            "description": "MongoDB ObjectId of the annotation group",
+            "example": "507f1f77bcf86cd799439011"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAnnotationGroupRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Annotation group updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Annotation group updated successfully"
+                    },
+                    "group": {
+                      "$ref": "#/components/schemas/AnnotationGroup"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error (empty title, title too long, or archived workspace)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - user does not have composer role",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Annotation group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete annotation group",
+        "description": "Permanently delete an annotation group. Only users with composer role can delete. Member annotations remain in the workspace but are removed from the group (annotationGroupId set to null). This is a hard delete.",
+        "tags": [
+          "Annotation Groups"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{24}$"
+            },
+            "description": "MongoDB ObjectId of the annotation group",
+            "example": "507f1f77bcf86cd799439011"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Annotation group deleted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Annotation group deleted successfully"
+                    },
+                    "ungroupedCount": {
+                      "type": "integer",
+                      "description": "Number of member annotations whose annotationGroupId was reset to null",
+                      "example": 3
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Workspace is archived (read-only)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - user does not have composer role",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Annotation group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/artemis/annotation-groups/{id}/members": {
+      "post": {
+        "summary": "Add annotations to group",
+        "description": "Add one or more annotations to an annotation group. Annotations are automatically removed from their previous group if they belong to one. Validates that all annotations belong to the same workspace as the group.",
+        "tags": [
+          "Annotation Groups"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{24}$"
+            },
+            "description": "MongoDB ObjectId of the annotation group",
+            "example": "507f1f77bcf86cd799439011"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "annotationIds"
+                ],
+                "properties": {
+                  "annotationIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Array of annotation IDs to add to the group",
+                    "example": [
+                      "507f1f77bcf86cd799439011",
+                      "507f1f77bcf86cd799439012"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Annotations added to group successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "3 annotation(s) added to group"
+                    },
+                    "addedCount": {
+                      "type": "integer",
+                      "description": "Annotations newly added (excludes those already in the group).",
+                      "example": 3
+                    },
+                    "movedCount": {
+                      "type": "integer",
+                      "description": "Annotations transferred from a different group.",
+                      "example": 1
+                    },
+                    "skippedCount": {
+                      "type": "integer",
+                      "description": "Annotations that were already members of this group.",
+                      "example": 0
+                    },
+                    "group": {
+                      "type": "object",
+                      "description": "Updated group metadata after the operation.",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "example": "507f1f77bcf86cd799439011"
+                        },
+                        "title": {
+                          "type": "string",
+                          "example": "Structural Issues"
+                        },
+                        "memberCount": {
+                          "type": "integer",
+                          "example": 12
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error (empty array, annotations from different workspace, archived workspace, etc.)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Annotation group or annotation not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/artemis/annotation-groups/{id}/members/{annotationId}": {
+      "delete": {
+        "summary": "Remove annotation from group",
+        "description": "Remove a specific annotation from an annotation group by setting its annotationGroupId to null. The annotation remains in the workspace. Any authenticated user can remove annotations from groups.",
+        "tags": [
+          "Annotation Groups"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{24}$"
+            },
+            "description": "MongoDB ObjectId of the annotation group",
+            "example": "507f1f77bcf86cd799439011"
+          },
+          {
+            "in": "path",
+            "name": "annotationId",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{24}$"
+            },
+            "description": "MongoDB ObjectId of the annotation to remove",
+            "example": "507f1f77bcf86cd799439012"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Annotation removed from group successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Annotation removed from group"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Annotation does not belong to this group",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Annotation group or annotation not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/artemis/annotation-groups/{id}/export": {
+      "get": {
+        "summary": "Export annotation group with members",
+        "description": "Export an annotation group with all its member annotations as JSON. Includes group metadata, workspace information, and all annotations sorted by creation date. Useful for backup and data integration.",
+        "tags": [
+          "Annotation Groups"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{24}$"
+            },
+            "description": "MongoDB ObjectId of the annotation group",
+            "example": "507f1f77bcf86cd799439011"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Annotation group exported successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "group": {
+                      "$ref": "#/components/schemas/AnnotationGroup"
+                    },
+                    "annotations": {
+                      "type": "array",
+                      "description": "All member annotations in the group",
+                      "items": {
+                        "$ref": "#/components/schemas/Annotation"
+                      }
+                    },
+                    "exportedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "Timestamp of when export was created"
+                    },
+                    "memberCount": {
+                      "type": "integer",
+                      "description": "Total number of member annotations",
+                      "example": 15
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid ID format - must be a valid MongoDB ObjectId"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Annotation group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/artemis/annotations": {
+      "post": {
+        "summary": "Create VR annotation",
+        "description": "Create a new annotation in a workspace. Supports 6 types (POI, LASSO, PRIMITIVE, MEASUREMENT, ENTITY, IMAGE). Type-specific fields live in a nested sub-object named after the type (`poi`, `lasso`, `primitive`, `measurement`, `entity`, `image`). The `createdBy` field is optional in body (G-2 async entity rule) — falls back to the authenticated JWT user if omitted. The schema is permissive; per-type completeness is enforced by the `/validate` endpoint (AN-10).\n",
+        "tags": [
+          "Annotations"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAnnotationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Annotation created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Annotation created successfully"
+                    },
+                    "annotation": {
+                      "$ref": "#/components/schemas/Annotation"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error (missing required fields, invalid createdBy, etc.)"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token"
+          },
+          "404": {
+            "description": "Workspace or annotation group not found"
+          }
+        }
+      },
+      "get": {
+        "summary": "List annotations with filtering",
+        "description": "List annotations with filtering by workspace, type, group, or creator; supports sorting, pagination, and field selection.",
+        "tags": [
+          "Annotations"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspaceId",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "annotationType",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "POI",
+                "LASSO",
+                "PRIMITIVE",
+                "MEASUREMENT",
+                "ENTITY",
+                "IMAGE"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "annotationGroupId",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "createdBy",
+            "schema": {
+              "type": "string",
+              "description": "Filter by creator userId"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "type": "string",
+              "example": "createdAt:desc"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "maximum": 1000
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "type": "integer",
+              "default": 0
+            }
+          },
+          {
+            "in": "query",
+            "name": "fields",
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated field projection"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Annotations retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "Number of annotations in this page",
+                      "example": 25
+                    },
+                    "total": {
+                      "type": "integer",
+                      "description": "Total matching the filter (across all pages)",
+                      "example": 137
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "example": 100
+                    },
+                    "offset": {
+                      "type": "integer",
+                      "example": 0
+                    },
+                    "hasMore": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "annotations": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Annotation"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token"
+          }
+        }
+      }
+    },
+    "/artemis/annotations/validate": {
+      "post": {
+        "summary": "Validate annotation completeness",
+        "description": "Validate an annotation's completeness for its type without creating a DB record. Supports two modes: (1) Pre-persistence — send the full annotation body. (2) Post-persistence — send `{ _id: \"...\" }` and the endpoint fetches and validates. Returns `{ valid, errors[], warnings[] }`. Per-type rules are defined in AN-10 / LA-5 / ME-5 / EN-2 / IM-4.\n",
+        "tags": [
+          "Annotations"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CreateAnnotationRequest"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "_id"
+                    ],
+                    "description": "Post-persistence mode — fetch and validate by id.",
+                    "properties": {
+                      "_id": {
+                        "type": "string",
+                        "pattern": "^[0-9a-fA-F]{24}$",
+                        "example": "507f1f77bcf86cd799439011"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Validation completed (check `valid` field)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid _id format or missing annotationType"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token"
+          },
+          "404": {
+            "description": "Annotation (_id) not found in post-persistence mode"
+          }
+        }
+      }
+    },
+    "/artemis/annotations/export": {
+      "get": {
+        "summary": "Export annotations as JSON",
+        "description": "Export annotations with metadata. Requires workspaceId. No pagination — returns all matching annotations.",
+        "tags": [
+          "Annotations"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspaceId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "annotationType",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "POI",
+                "LASSO",
+                "PRIMITIVE",
+                "MEASUREMENT",
+                "ENTITY",
+                "IMAGE"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "annotationGroupId",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fields",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Annotations exported successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "metadata": {
+                      "type": "object",
+                      "properties": {
+                        "exportDate": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "totalAnnotations": {
+                          "type": "integer",
+                          "example": 42
+                        },
+                        "exportedBy": {
+                          "type": "string",
+                          "example": "John Doe"
+                        },
+                        "workspaceId": {
+                          "type": "string",
+                          "example": "507f1f77bcf86cd799439011"
+                        },
+                        "workspaceName": {
+                          "type": "string",
+                          "example": "Xanthi VR Tour"
+                        },
+                        "filters": {
+                          "type": "object",
+                          "properties": {
+                            "workspaceId": {
+                              "type": "string"
+                            },
+                            "annotationType": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "annotationGroupId": {
+                              "type": "string",
+                              "nullable": true
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "annotations": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Annotation"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing workspaceId"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token"
+          },
+          "404": {
+            "description": "Workspace not found"
+          }
+        }
+      }
+    },
+    "/artemis/annotations/{id}": {
+      "get": {
+        "summary": "Get single annotation",
+        "description": "Retrieve a specific annotation by its MongoDB ObjectId.",
+        "tags": [
+          "Annotations"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{24}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Annotation retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "annotation": {
+                      "$ref": "#/components/schemas/Annotation"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid ID format - must be a valid MongoDB ObjectId"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token"
+          },
+          "404": {
+            "description": "Annotation not found"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update annotation",
+        "description": "Update an existing annotation's fields. Only composers can update. `createdBy` in body is intentionally ignored (AN-11) — the creator never changes. `annotationType` cannot be changed after creation. Type-specific sub-objects (`poi`, `lasso`, `primitive`, `measurement`, `entity`, `image`) are merged, so partial updates are allowed.\n",
+        "tags": [
+          "Annotations"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{24}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAnnotationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Annotation updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Annotation updated successfully"
+                    },
+                    "annotation": {
+                      "$ref": "#/components/schemas/Annotation"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error (empty title, invalid annotationGroupId, archived workspace, etc.)"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token"
+          },
+          "403": {
+            "description": "Forbidden — user is not a composer"
+          },
+          "404": {
+            "description": "Annotation or annotation group not found"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete annotation",
+        "description": "Permanently delete an annotation. Only composers can delete. Hard delete — no soft-delete flag.",
+        "tags": [
+          "Annotations"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{24}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Annotation deleted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Workspace is archived (read-only)"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token"
+          },
+          "403": {
+            "description": "Forbidden — user is not a composer"
+          },
+          "404": {
+            "description": "Annotation not found"
+          }
+        }
+      }
+    },
+    "/artemis/save-logs": {
+      "post": {
+        "summary": "Create a save log entry for a workspace",
+        "description": "Records an incremental summary describing what happened during the most recent save session of a workspace. Immutable audit entry — no update or delete endpoints exist. Any authenticated user can create a save log (authorization is trust-based at the AR client layer — only the workspace composer has access to the Save UI). See DESIGN_DECISIONS SL-1..SL-7.\n",
+        "tags": [
+          "Save Logs"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "workspaceId",
+                  "summary"
+                ],
+                "properties": {
+                  "workspaceId": {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{24}$",
+                    "description": "MongoDB ObjectId of the workspace this save log belongs to",
+                    "example": "507f1f77bcf86cd799439011"
+                  },
+                  "summary": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000,
+                    "description": "User-written summary of what happened in the session (1-2000 chars)",
+                    "example": "Added 3 POI annotations near the north wall, deleted 1 outdated measurement."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Save log created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Save log created successfully"
+                    },
+                    "saveLog": {
+                      "$ref": "#/components/schemas/SaveLog"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error (missing/empty fields, summary too long, invalid workspaceId format, archived workspace)"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token"
+          },
+          "404": {
+            "description": "Workspace not found"
+          }
+        }
+      },
+      "get": {
+        "summary": "List save logs for a workspace",
+        "description": "Returns all save log entries for a given workspace, sorted newest first.",
+        "tags": [
+          "Save Logs"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspaceId",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{24}$"
+            },
+            "description": "MongoDB ObjectId of the workspace",
+            "example": "507f1f77bcf86cd799439011"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Save logs retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "workspaceId": {
+                      "type": "string",
+                      "example": "507f1f77bcf86cd799439011"
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "Number of save logs returned",
+                      "example": 12
+                    },
+                    "saveLogs": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SaveLog"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid workspaceId query parameter"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token"
+          }
+        }
+      }
+    },
+    "/artemis/workspaces": {
+      "post": {
+        "summary": "Create new workspace",
+        "description": "Create a VR collaboration workspace with optional access code and linked asset. Only users with 'composer' role can create workspaces. Workspace titles must be unique among active workspaces.",
+        "tags": [
+          "Workspaces"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWorkspaceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Workspace created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Workspace created successfully"
+                    },
+                    "workspace": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/Workspace"
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "composer": {
+                              "$ref": "#/components/schemas/Creator"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error (missing fields, title not unique, title too long)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token"
+          },
+          "403": {
+            "description": "Forbidden - user does not have 'composer' role"
+          },
+          "404": {
+            "description": "Asset not found"
+          }
+        }
+      },
+      "get": {
+        "summary": "List workspaces",
+        "description": "List workspaces filtered by user role:\n  * **composer-role users** see ONLY workspaces they created.\n  * **viewer-role users** see ALL workspaces matching the status filter.\n\nDefaults to `status=active` if no query param is provided. Each workspace in the response has its `assetId` populated as a nested `asset: { id, title, description, resourceURL }` and its `composerId` populated as a nested `composer: { id, name }`.\n",
+        "tags": [
+          "Workspaces"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "archived"
+              ]
+            },
+            "description": "Filter by workspace status (defaults to 'active')",
+            "example": "active"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of workspaces retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "Number of workspaces returned",
+                      "example": 3
+                    },
+                    "workspaces": {
+                      "type": "array",
+                      "items": {
+                        "allOf": [
+                          {
+                            "$ref": "#/components/schemas/Workspace"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "asset": {
+                                "type": "object",
+                                "description": "Populated subset of the linked asset.",
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "title": {
+                                    "type": "string"
+                                  },
+                                  "description": {
+                                    "type": "string"
+                                  },
+                                  "resourceURL": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "composer": {
+                                "$ref": "#/components/schemas/Creator"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token"
+          }
+        }
+      }
+    },
+    "/artemis/workspaces/{id}": {
+      "get": {
+        "summary": "Get workspace details",
+        "description": "Retrieve detailed information about a specific workspace by its ID, including asset and composer details",
+        "tags": [
+          "Workspaces"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{24}$"
+            },
+            "description": "MongoDB ObjectId of the workspace",
+            "example": "507f1f77bcf86cd799439011"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspace retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "workspace": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/Workspace"
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "asset": {
+                              "type": "object",
+                              "description": "Populated subset of the linked asset.",
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "title": {
+                                  "type": "string"
+                                },
+                                "description": {
+                                  "type": "string"
+                                },
+                                "resourceURL": {
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "composer": {
+                              "$ref": "#/components/schemas/Creator"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid ID format - must be a valid MongoDB ObjectId"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token"
+          },
+          "404": {
+            "description": "Workspace not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update workspace",
+        "description": "Update workspace metadata (title, description, accessCode). All fields are optional. Only the workspace creator can update. Title must be unique among active workspaces if changed.",
+        "tags": [
+          "Workspaces"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{24}$"
+            },
+            "description": "MongoDB ObjectId of the workspace",
+            "example": "507f1f77bcf86cd799439011"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateWorkspaceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Workspace updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Workspace updated successfully"
+                    },
+                    "workspace": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/Workspace"
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "composer": {
+                              "$ref": "#/components/schemas/Creator"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error (empty title, title too long, title not unique)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token"
+          },
+          "403": {
+            "description": "Forbidden - user is not the workspace creator"
+          },
+          "404": {
+            "description": "Workspace not found (invalid id or no document with that id)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Archive workspace",
+        "description": "Soft delete workspace by setting status to 'archived'. The workspace is not permanently deleted and can be viewed with status=archived query. Only the workspace creator can archive.",
+        "tags": [
+          "Workspaces"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{24}$"
+            },
+            "description": "MongoDB ObjectId of the workspace",
+            "example": "507f1f77bcf86cd799439011"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspace archived successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Workspace archived successfully"
+                    },
+                    "workspace": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "example": "507f1f77bcf86cd799439011"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "archived"
+                          ],
+                          "example": "archived"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid ID format - must be a valid MongoDB ObjectId"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token"
+          },
+          "403": {
+            "description": "Forbidden - user is not the workspace creator"
+          },
+          "404": {
+            "description": "Workspace not found"
+          }
+        }
+      }
+    },
+    "/artemis/workspaces/{id}/annotations": {
+      "get": {
+        "summary": "Get workspace annotations",
+        "description": "Retrieve all annotations in a workspace with optional filtering by annotation type. Returns annotations sorted by creation date (newest first) with populated creator and group information.",
+        "tags": [
+          "Workspaces"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{24}$"
+            },
+            "description": "MongoDB ObjectId of the workspace",
+            "example": "507f1f77bcf86cd799439011"
+          },
+          {
+            "in": "query",
+            "name": "annotationType",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "POI",
+                "LASSO",
+                "PRIMITIVE",
+                "MEASUREMENT",
+                "ENTITY",
+                "IMAGE"
+              ]
+            },
+            "description": "Filter by annotation type",
+            "example": "POI"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Annotations retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "workspaceId": {
+                      "type": "string",
+                      "example": "507f1f77bcf86cd799439011"
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "Number of annotations returned",
+                      "example": 25
+                    },
+                    "annotations": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Annotation"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid ID format - must be a valid MongoDB ObjectId"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/artemis/workspaces/{id}/annotation-groups": {
+      "get": {
+        "summary": "Get workspace annotation groups",
+        "description": "Retrieve all annotation groups in a workspace. Returns groups sorted by creation date (newest first) with populated creator information.",
+        "tags": [
+          "Workspaces"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{24}$"
+            },
+            "description": "MongoDB ObjectId of the workspace",
+            "example": "507f1f77bcf86cd799439011"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Annotation groups retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "workspaceId": {
+                      "type": "string",
+                      "example": "507f1f77bcf86cd799439011"
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "Number of annotation groups returned",
+                      "example": 5
+                    },
+                    "groups": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AnnotationGroup"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid ID format - must be a valid MongoDB ObjectId"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid JWT token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "externalDocs": {
+    "description": "ARTEMIS Deliverable D9.2 — Services Implementation, Section 3.3",
+    "url": "https://doi.org/10.5281/zenodo.20750197"
+  }
+}
