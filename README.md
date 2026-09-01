@@ -4,7 +4,7 @@ OpenAPI 3.0 specification for the AR/VR collaboration services of the
 [ARTEMIS](https://www.artemis-twin.eu/) project, developed by
 **ATHENA Research Center** within **WP9.2**.
 
-📖 **[Browse the interactive documentation →](https://artemis-twin.github.io/artemis-arvr-api/)**
+📖 **[Browse the interactive documentation →](https://artemis-twin.github.io/artemis-arvr-annotation-api/)**
 
 ---
 
@@ -28,7 +28,7 @@ service categories defined in **Deliverable D9.2, Section 3.3**:
 
 | File | Contents |
 |---|---|
-| `artemis-arvr-openapi.json` | The OpenAPI 3.0 specification |
+| `artemis-arvr-annotation-openapi.json` | The OpenAPI 3.0 specification |
 | `index.html` | Swagger UI page, served by GitHub Pages |
 
 ## Design notes
